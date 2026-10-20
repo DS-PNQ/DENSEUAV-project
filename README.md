@@ -4,7 +4,7 @@ This repository contains the author's official baseline from the [DenseUAV](http
 
 Full results with discussion (in Vietnamese): [RESULTS.md](RESULTS.md).
 
-**Round 2 (Oct 2026):** [experiments/](experiments/) holds the Kaggle notebooks (`baseline06*.ipynb`, `denseuav_optim_t4x2.ipynb`, `baselinetest03.ipynb`), the reports [baocao_baseline06.md](experiments/baocao_baseline06.md) / `.tex`, `baocao_gui_thay.tex`, figures and the shape-vector review (`contrib/`). Best result: LPN-B2 + IRP head with D4 TTA + DBA, **87.43 R@1 / 90.22 SDM@1** (1 seed).
+**Round 2 (Oct 2026):** [experiments/](experiments/) holds the Kaggle notebooks (`baseline06*.ipynb`, `denseuav_optim_t4x2.ipynb`, `baselinetest03.ipynb`), the report [baocao_baseline06.md](experiments/baocao_baseline06.md), figures and the shape-vector verification script (`contrib/check_examples.py`). Best result: LPN-B2 + IRP head with D4 TTA + DBA, **87.43 R@1 / 90.22 SDM@1** (1 seed).
 
 ---
 
@@ -50,6 +50,13 @@ The system is trained on the **DenseUAV** dataset (2256 training locations; 777 
 ├── README.md
 ├── RESULTS.md                  # Full results tables and discussion
 ├── figures/                    # CT3 error-diagnosis figures
+├── experiments/                # Round-2 Kaggle notebooks, report and figures
+│   ├── baocao_baseline06.md
+│   ├── baseline06*.ipynb
+│   ├── denseuav_optim_t4x2.ipynb
+│   ├── baselinetest03.ipynb
+│   ├── figures/
+│   └── contrib/check_examples.py
 └── baseline/
     ├── train.py                # Main training entry point (original)
     ├── test.py                 # Feature extraction / inference (original)
