@@ -4,6 +4,8 @@ This repository contains the author's official baseline from the [DenseUAV](http
 
 Full results with discussion (in Vietnamese): [RESULTS.md](RESULTS.md).
 
+**Round 2 (Oct 2026):** [experiments/](experiments/) holds the Kaggle notebooks (`baseline06*.ipynb`, `denseuav_optim_t4x2.ipynb`, `baselinetest03.ipynb`), the reports [baocao_baseline06.md](experiments/baocao_baseline06.md) / `.tex`, `baocao_gui_thay.tex`, figures and the shape-vector review (`contrib/`). Best result: LPN-B2 + IRP head with D4 TTA + DBA, **87.43 R@1 / 90.22 SDM@1** (1 seed).
+
 ---
 
 ## Table of Contents

@@ -1,0 +1,322 @@
+% Báo cáo kỹ thuật: tổng hợp baseline06.ipynb (A) và baseline06v3.ipynb (B), đối chiếu với bài shape-vector.
+% Biên dịch: XeLaTeX hoặc pdfLaTeX (Overleaf: Menu -> Compiler).
+\documentclass[11pt,a4paper]{article}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T5]{fontenc}
+  \usepackage[utf8]{inputenc}
+\else
+  \usepackage{fontspec}
+\fi
+\usepackage[vietnamese]{babel}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs,multirow,array}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\setlist{nosep,leftmargin=1.6em}
+\newtheorem*{nhanxet}{Nhận xét}
+\newcommand{\run}[1]{\texttt{#1}}
+\newcommand{\dd}{\,dm}
+
+\title{Đánh giá thực nghiệm các cải tiến cho định vị UAV--vệ tinh trên DenseUAV:\\
+descriptor tích phân ring$\times$sector, ràng buộc nhất quán không gian mềm\\
+và chẩn đoán lỗi, đối chiếu với lý thuyết shape vector}
+\author{Báo cáo kỹ thuật nội bộ\\[2pt]
+\small Tổng hợp từ \texttt{baseline06.ipynb} (thí nghiệm A) và \texttt{baseline06v3.ipynb} (thí nghiệm B);
+Kaggle, 2$\times$T4, 1 seed/cấu hình}
+\date{19/10/2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Em đánh giá ba hướng cải tiến cho bài toán truy hồi ảnh drone $\to$ vệ tinh trên DenseUAV~\cite{dai2024}:
+\begin{itemize}
+\item[(CT1)] một head mạng dựa trên shape vector tích phân Lebesgue~\cite{huu2026} trên lưới ring$\times$sector;
+\item[(CT2)] ràng buộc nhất quán không gian cục bộ dạng mềm;
+\item[(CT3)] một khung chẩn đoán lỗi theo khoảng cách địa lý.
+\end{itemize}
+Hai pipeline (baseline LPN-B2 và Global ViT-S) cho tổng cộng 15 run huấn luyện và 9 biến thể test-time. Kết quả chính:
+\begin{enumerate}[label=(\roman*)]
+\item Head chia phần theo vòng tăng $+5.9$ R@1 so với Global, nhưng vòng tròn có trọng số $f_{\mathrm{decay}}$ chỉ ngang LPN (83.74 so với 83.57). Thêm sector và $|\mathrm{DFT}|$ để bất biến hướng bay làm giảm 2.8 R@1.
+\item Mọi dạng bất biến xoay đều gây hại hoặc không có tác dụng.
+\item Các ràng buộc làm mượt không gian đạt đúng mục tiêu hình học, nhưng làm R@1 giảm 2.8--3.0 điểm.
+\item Gộp đặc trưng gallery theo địa điểm (DBA) cho cải thiện lớn nhất, đạt \textbf{87.43 R@1 / 90.22 SDM@1}.
+\end{enumerate}
+Đối chiếu với~\cite{huu2026} cho thấy head mạng là một \emph{mở rộng}, không phải một trường hợp riêng, của định nghĩa~(3.3) trong bài đó. Ngoài ra, kết quả (ii) là bằng chứng thực nghiệm đầu tiên cho câu hỏi mà~\cite{huu2026} để mở: nên đạt bất biến xoay bằng cách căn theo heading hay bằng tổ hợp bất biến.
+\end{abstract}
+
+\section{Giới thiệu}
+DenseUAV lấy mẫu vị trí theo lưới dày ($\approx$20\,m) trên 14 campus. Ảnh drone được chụp ở 3 độ cao (80/90/100\,m), mỗi vị trí có 6 ảnh vệ tinh (3 tỉ lệ $\times$ 2 năm). Vì lưới dày, các vị trí kề nhau gần như trùng ảnh. Ba hướng cải tiến:
+\begin{itemize}
+\item \textbf{CT1:} biểu diễn hình học--ngữ nghĩa dạng tích phân trên các ô ring$\times$sector, lấy từ bài shape vector~\cite{huu2026}.
+\item \textbf{CT2:} ràng buộc mềm rằng hai vị trí gần nhau về địa lý thì gần nhau trong không gian đặc trưng.
+\item \textbf{CT3:} phân loại lỗi top-1 thành lỗi ô kề, nhầm trong campus và nhầm giữa campus.
+\end{itemize}
+\emph{Câu hỏi nghiên cứu:} mỗi cải tiến có đóng góp vượt nhiễu so với baseline chạy trong cùng pipeline không, nhờ cơ chế nào, và kết quả có nhất quán với lý thuyết của~\cite{huu2026} không?
+
+\section{Thiết lập thực nghiệm}
+Giao thức theo repo DenseUAV (commit \texttt{b8de187}): 2256 lớp train; 777 lớp query test (2331 ảnh drone); gallery 3033 lớp (18\,198 ảnh vệ tinh). Metric gồm Recall@K, AP, SDM@K ($s=5\cdot10^3$) và MA@20m (top-1 cách vị trí thật dưới 20\,m). Mọi evaluator viết lại đều được \texttt{assert} khớp với file kết quả do script gốc sinh ra (sai lệch dưới 0.1 điểm). Mỗi run chỉ đổi một yếu tố so với baseline của pipeline. Các tham số test-time được cố định trước khi xem kết quả test.
+
+\begin{table}[h]\centering\small
+\caption{Hai pipeline thực nghiệm.}\label{tab:setup}
+\begin{tabular}{@{}lll@{}}\toprule
+& Thí nghiệm A (\texttt{baseline06}) & Thí nghiệm B (\texttt{baseline06v3})\\\midrule
+Baseline & LPN-B2, CE + WeightedSoftTriplet + KL, lr 0.01 & Global (CLS), CE + HardMiningTriplet, lr 0.003\\
+Backbone / train & \multicolumn{2}{l}{ViT-S/16-224; SGD, bs 16, 120 epoch, LR$\times$0.1 ở epoch 70/110}\\
+Cache ảnh & chỉ ảnh drone, cạnh ngắn 512\,px & mọi ảnh, cạnh ngắn 384\,px\\
+Kiểm soát nhiễu & thêm seed 777 cho baseline & không\\
+Baseline đạt & 84.77 R@1 / 87.50 SDM@1 & 77.82 / 81.85\\
+Run trước, độ phân giải gốc & 86.06 / 88.74 & 79.45 / 83.92\\\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Phương pháp}
+\subsection{CT1: head trung bình ô có trọng số trên lưới ring$\times$sector}
+Gọi $\varphi:\mathbb R^2\to\mathbb R^C$ là trường patch token của ViT (hằng trên từng patch), với tâm ảnh $x^*$ đóng vai vị trí UAV (camera nhìn thẳng xuống). Phân hoạch đĩa $B(x^*,R)$ thành $N_r$ vòng đều và $N_\theta$ cung như Mục 4.2 của~\cite{huu2026}, thu được các ô $U_i(x^*)$. Head tính
+\begin{equation}\label{eq:head}
+\tilde w_i(x^*)=\frac{\displaystyle\int_{U_i(x^*)\cap V} f_{x^*}\,\varphi\dd}{\displaystyle\int_{U_i(x^*)\cap V} f_{x^*}\dd},\qquad
+f(x)=f_{\mathrm{decay}}(x)=\max\!\Big(0,1-\frac{|x|}{R}\Big),
+\end{equation}
+trong đó $V$ là khung ảnh. Trọng số $f_{\mathrm{decay}}$ chính là trọng số của Ví dụ 4.1 trong~\cite{huu2026}. Các tích phân được tính chính xác bằng một ma trận cố định (tổng Riemann $8\times8$ ở A, $16\times16$ ở B, trên mỗi patch).
+
+Khi UAV đổi hướng, các cung dịch vòng. Vì vậy mỗi vòng $k$ chỉ giữ $\big[\overline{\tilde w}_{k\cdot},\,|\mathrm{DFT}_{1..K}(\tilde w_{k\cdot})|\big]$, bất biến khi xoay $360^\circ/N_\theta$ và khi lật (đã kiểm chứng bằng self-test). Cấu hình cụ thể:
+\begin{itemize}
+\item A (head \run{IRP}): $R$ bằng nửa cạnh ảnh, $N_r=2$, $N_\theta=8$, $K=1$.
+\item B (head \run{RS}): $R$ bằng nửa đường chéo, $N_r=2$, $N_\theta=8$, $K=2$.
+\item B, ablation \run{ringonly}: $N_\theta=1$, tức vòng tròn có trọng số, không dùng DFT.
+\end{itemize}
+Quan hệ chính xác giữa~\eqref{eq:head} và lý thuyết được phân tích ở Mục~\ref{sec:doichieu}.
+
+\subsection{CT2: nhất quán không gian mềm}
+\begin{itemize}
+\item \emph{LC loss (A):} $\mathcal L=\mathrm{softplus}\big(\alpha(d_F^{\le30\,\mathrm m}-d_F^{>60\,\mathrm m})\big)$ trên các cặp có trong batch. Loss chỉ ép thứ tự, không ép hằng số Lipschitz.
+\item \emph{GeoLS (B):} nhãn CE làm mềm $T=(1-\varepsilon)I+\varepsilon K$, với $K$ là kernel Gauss ($\sigma=20$\,m) trên các lớp láng giềng và $\varepsilon=0.1$.
+\item \emph{GeoSmooth (B, test-time):} $s'(q,g)=\sum_{c'}K_\sigma(c(g),c')\,\bar s(q,c')$, với $\sigma=10$\,m. Khi $\sigma=0$, phép này chỉ gộp điểm của 6 ảnh cùng vị trí (\emph{loc-fuse}).
+\end{itemize}
+
+\subsection{Lấy mẫu động và test-time}
+\emph{DSS (A)} theo CEUSP~\cite{ceusp}: từ epoch 20, mỗi nhóm 4 lớp gồm anchor, 1 láng giềng GPS và 2 lớp mà mô hình đang nhầm nhất. Độ tương đồng được đo lại mỗi 6 epoch.
+
+\emph{Test-time (A):}
+\begin{itemize}
+\item TTA D4: 4 góc $\times$ lật.
+\item DBA~\cite{dba}: thay đặc trưng mỗi ảnh vệ tinh bằng trung bình \emph{đã chuẩn hoá} với ảnh cùng ô ở năm còn lại (\emph{DBA years}) hoặc với cả 6 ảnh của địa điểm (\emph{DBA place}).
+\end{itemize}
+
+\subsection{CT3: chẩn đoán lỗi}
+Mỗi top-1 sai được xếp vào một trong ba loại:
+\begin{itemize}
+\item \emph{ô kề}: cách vị trí đúng không quá 30\,m;
+\item \emph{nhầm trong campus}: cách hơn 30\,m nhưng cùng thành phần liên thông của đồ thị GPS;
+\item \emph{nhầm giữa campus}: thuộc thành phần liên thông khác.
+\end{itemize}
+Lỗi xa được tách tiếp thành hai loại:
+\begin{itemize}
+\item \emph{cặp mơ hồ}: hai prototype gần nhau hơn trung vị khoảng cách từ query tới vị trí đúng;
+\item \emph{lệch miền}: các trường hợp còn lại.
+\end{itemize}
+Trên prototype gallery $P_i$, em đo thêm:
+\begin{itemize}
+\item Spearman($d_{geo}$, cos);
+\item số cặp gián đoạn, tức cặp cách không quá 30\,m nhưng có cos thấp hơn trung vị của các cặp cách 60--100\,m;
+\item hằng số Lipschitz thực nghiệm $\lVert P_i-P_j\rVert/d_{ij}$.
+\end{itemize}
+
+\section{Kết quả}
+\begin{table}[h]\centering\small
+\caption{Thí nghiệm A (baseline LPN-B2). Giao thức repo (TTA lật) và cấu hình test-time cố định trước \emph{D4 both + DBA years}.}\label{tab:A}
+\begin{tabular}{@{}llrrrrr@{}}\toprule
+Run & Thay đổi & R@1 & $\Delta$R@1 & SDM@1 & R@1\,(+DBA) & SDM@1\,(+DBA)\\\midrule
+\run{lpn} & baseline & 84.77 & 0 & 87.50 & 87.13 & 90.10\\
+\run{lpn\_seed777} & chỉ đổi seed & 84.77 & 0.00 & 87.40 & 86.96 & 89.96\\
+\run{lpn\_dss} & lấy mẫu động & \textbf{85.89} & \textbf{+1.12} & \textbf{88.17} & 87.22 & 90.17\\
+\run{lpn\_ct2} & CT2: sampler GPS + LC loss & 85.33 & +0.56 & 87.97 & 86.83 & 89.82\\
+\run{irp} & CT1: 2 ring $\times$ 8 sector & 84.73 & $-$0.04 & 87.35 & \textbf{87.43} & \textbf{90.22}\\
+\run{lpn\_dss\_lc} & DSS + CT2 & 83.44 & $-$1.33 & 86.70 & 85.37 & 88.84\\
+\run{dino\_lpn} & DINOv2-S/14 & 4.76 & $-$80.0 & 7.91 & 3.43 & 5.81\\\bottomrule
+\end{tabular}
+
+\smallskip\footnotesize Ghi chú: hai run ViT-B bị bỏ vì vượt ngân sách 12\,h. \run{irp} có R@10 cao nhất (98.33), thêm 0.39M tham số, MACs không đổi.
+\end{table}
+
+\begin{table}[h]\centering\small
+\caption{Thí nghiệm B (baseline Global), giao thức repo, kèm R@1 theo độ cao bay.}\label{tab:B}
+\begin{tabular}{@{}lrrrrrrr@{}}\toprule
+Run & R@1 & $\Delta$R@1 & SDM@1 & MA@20m & H80 & H90 & H100\\\midrule
+\run{Global} (đối chứng) & 77.82 & 0 & 81.85 & 82.11 & 72.97 & 78.38 & 82.11\\
+\run{Global\_GeoLS} & 74.99 & $-$2.83 & 80.68 & 81.30 & 72.84 & 74.13 & 77.99\\
+\run{RS\_B2} (8 sector, $|\mathrm{DFT}_{1..2}|$) & 80.95 & +3.13 & 84.45 & 85.33 & 77.61 & 81.85 & 83.40\\
+\run{RS\_B2\_GeoLS} & 77.91 & +0.09 & 82.47 & 82.67 & 75.42 & 79.15 & 79.15\\
+\run{RS\_B2\_GeoLS\_KL} & 81.38 & +3.56 & 84.81 & 85.07 & 78.89 & 81.47 & 83.78\\
+\run{LPN\_B2} (vòng vuông, $f\equiv1$) & 83.57 & +5.75 & 86.43 & 87.00 & 82.37 & 83.78 & 84.56\\
+\run{RS\_B2\_ringonly} (vòng tròn, $f_{\mathrm{decay}}$) & \textbf{83.74} & \textbf{+5.92} & \textbf{86.84} & \textbf{87.47} & \textbf{83.27} & 83.66 & 84.30\\
+\run{DINOv2S\_RS\_B2\_GeoLS} & 20.59 & $-$57.2 & 27.46 & 27.58 & 19.05 & 21.24 & 21.49\\\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]\centering\small
+\caption{Test-time: $\Delta$R@1 / $\Delta$SDM@1 so với TTA lật của chính run đó.}\label{tab:tt}
+\begin{tabular}{@{}lccccc@{}}\toprule
+Biến thể & A: \run{lpn} & A: 6 run & B: \run{Global} & B: \run{LPN\_B2} & B: \run{ringonly}\\\midrule
+TTA xoay, chỉ query & $-$1.72 / $-$0.82 & $-$1.4\,$\to$\,$-$2.7 & $-$0.04 / +0.76 & $-$0.99 / $-$0.28 & $-$1.59 / $-$0.82\\
+D4 query + gallery & $-$0.47 / +0.21 & $-$0.5\,$\to$\,$-$1.6 & -- & -- & --\\
+\textbf{DBA years} & \textbf{+2.36 / +2.60} & +1.3\,$\to$\,+2.7 & -- & -- & --\\
+DBA place & +2.75 / +2.87 & -- & -- & -- & --\\
+loc-fuse (gộp \emph{điểm}) & -- & -- & $-$0.34 / $-$0.36 & $-$2.53 / $-$2.10 & $-$2.62 / $-$2.44\\
+GeoSmooth $\sigma=10$\,m & -- & -- & $-$3.39 / $-$2.43 & $-$5.53 / $-$4.33 & $-$4.80 / $-$4.04\\\bottomrule
+\end{tabular}
+\end{table}
+
+Sweep $\sigma$ trên run tốt nhất của B (chỉ để phân tích) cho R@1 giảm đơn điệu:
+\begin{center}\small
+\begin{tabular}{@{}lcccccc@{}}\toprule
+$\sigma$ (m) & 0 & 5 & 10 & 15 & 20 & 30\\\midrule
+R@1 & 81.12 & 81.12 & 78.94 & 65.21 & 49.16 & 25.35\\\bottomrule
+\end{tabular}
+\end{center}
+Với loc-fuse và GeoSmooth, 6 ảnh của một địa điểm có cùng điểm số. Do đó R@5 bằng R@1 và AP bị thổi phồng (66.7 lên 82.4). Với các dòng này, chỉ nên đọc R@1 và SDM@1.
+
+\begin{table}[h]\centering\small
+\caption{Phân bố top-1 (\% query); với A, mũi tên chỉ giao thức repo $\to$ DBA.}\label{tab:err}
+\begin{tabular}{@{}lccccc@{}}\toprule
+& Đúng & Ô kề $\le$30\,m & Trong campus & Giữa campus & Trung vị sai số (m)\\\midrule
+A \run{lpn} & 84.77\,$\to$\,87.13 & 6.61\,$\to$\,7.34 & 5.58\,$\to$\,3.69 & 3.04\,$\to$\,1.84 & 43.0\,$\to$\,21.3\\
+B \run{Global} & 77.82 & 9.70 & 7.46 & 5.02 & --\\
+B \run{Global\_GeoLS} & 74.99 & \textbf{14.46} & 6.74 & 3.82 & --\\
+B \run{RS\_B2\_ringonly} & 83.74 & 7.68 & 5.83 & 2.75 & --\\\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]\centering\small
+\caption{Hình học của embedding trên prototype vị trí (B).}\label{tab:geo}
+\begin{tabular}{@{}lcccc@{}}\toprule
+Run & Cặp mơ hồ ($>$100\,m) & Cặp gián đoạn ($\le$30\,m) & Spearman($d_{geo}$, cos) & Lipschitz p95 (1/m)\\\midrule
+Global & 75 & 44 & $-$0.37 & 0.0508\\
+Global\_GeoLS & 87 & \textbf{2} & \textbf{$-$0.57} & \textbf{0.0427}\\
+RS\_B2 & 24 & 60 & $-$0.34 & 0.0521\\
+RS\_B2\_GeoLS & 34 & 2 & $-$0.55 & 0.0442\\
+LPN\_B2 / ringonly & 24 / 24 & 68 / 73 & $-$0.33 & 0.0528\\\bottomrule
+\end{tabular}
+\end{table}
+
+Ở A, chỉ 26--34\% lỗi xa thuộc loại \emph{cặp mơ hồ}; khoảng 2/3 còn lại là \emph{lệch miền}. So sánh từng query ở cấu hình DBA giữa \run{lpn} và \run{lpn\_seed777}: 95 query chuyển từ đúng sang sai và 91 query chuyển từ sai sang đúng, tức khoảng 4\% query đổi kết quả chỉ vì seed. Mức thay đổi giữa \run{lpn} và \run{lpn\_dss} (82/84), hay giữa \run{lpn} và \run{irp} (86/93), không khác mức của seed.
+
+\section{Đối chiếu với lý thuyết shape vector~\cite{huu2026}}\label{sec:doichieu}
+\subsection{Head mạng là mở rộng, không phải trường hợp riêng của~(3.3)}
+Theo~(3.3) của~\cite{huu2026}, thành phần của shape vector là
+\[
+w_i(x^*)=\int_\Omega f_{x^*}\,\chi_{V(x^*)\cap U_i(x^*)}\dd ,
+\]
+tức một tích phân \emph{không chuẩn hoá} của trọng số trên phần \emph{nhìn thấy được} của ô. Hàm dưới dấu tích phân chỉ chứa thông tin hình học (tầm nhìn bị vật cản $O$ che). Công thức~\eqref{eq:head} khác ở hai điểm:
+\begin{enumerate}[label=(\alph*)]
+\item hàm chỉ thị $\chi_{V}$ được thay bằng một trường ngữ nghĩa vector $\varphi$ do mạng học;
+\item tích phân được chuẩn hoá theo khối lượng trọng số của ô.
+\end{enumerate}
+Quan hệ chính xác giữa hai công thức:
+\[
+\varphi=\chi_{V(x^*)}\ \Longrightarrow\ \tilde w_i=\frac{w_i(x^*)}{\int_{U_i(x^*)} f_{x^*}\dd},\qquad
+f\equiv1\ \Longrightarrow\ \tilde w_i=(R_N\varphi)\big|_{U_i}\ \text{(Định nghĩa 5.2)}.
+\]
+Như vậy~\eqref{eq:head} là trung bình ô theo độ đo $\mu=f\,dm$, bao gồm cả~(3.3) (sau khi chuẩn hoá) lẫn Định nghĩa~5.2 như những trường hợp riêng.
+
+\begin{nhanxet}
+Chứng minh của Bổ đề~5.3 và Định lý~5.4 dường như chuyển được nguyên vẹn sang độ đo $\mu$: dùng Jensen với $\mu/\mu(U_i^N)$, và $C_c$ trù mật trong $L^p(\mu)$ với $\mu$ hữu hạn. Nếu đúng, ta được một bản ``tinh phân hoạch có trọng số'' cho head mạng. Đây mới là phác thảo, cần viết chứng minh đầy đủ trước khi đưa vào paper.
+\end{nhanxet}
+
+Khẳng định ``LPN là trường hợp riêng'' (ghi trong notebook B) đúng \emph{cho dạng trung bình ô}: LPN tương ứng với $f\equiv1$, một sector, phân hoạch vòng vuông. Mục~3 của~\cite{huu2026} cho phép mọi phân hoạch có $m(\partial U_i)=0$. Điều này tương tự cách Ví dụ~4.2 thu lại descriptor đa giác của~\cite{ouyang2024}. Chính~\cite{huu2026} cũng nhận xét rằng LPN~\cite{lpn} ``gần với phân hoạch ring--sector''. Tuy nhiên, LPN \emph{không} phải trường hợp riêng của~(3.3) gốc, vì nó không chứa $\chi_V$.
+
+\subsection{Bảng đối chiếu}
+\begin{table}[h]\centering\small
+\caption{Đối chiếu giữa bài shape vector~\cite{huu2026} và cách hiện thực/diễn giải trong hai notebook.}\label{tab:doichieu}
+\begin{tabular}{@{}p{2.6cm}p{4.7cm}p{4.3cm}p{3.6cm}@{}}\toprule
+Điểm & Bài~\cite{huu2026} & Notebook / báo cáo & Đánh giá\\\midrule
+Trích dẫn & Có Định nghĩa 3.2, 3.6, 5.1, 5.2; ``(3.3)'' là \emph{phương trình}, còn Mệnh đề 3.3 là tính nửa liên tục dưới & Notebook B ghi ``Def.~3.3'' & \textbf{Sai nhãn}: sửa thành ``Eq.~(3.3)''\\
+Thành phần & $\int f\chi_{V\cap U_i}\dd$, không chuẩn hoá, chỉ chứa hình học & $\int f\varphi/\int f$ với $\varphi$ là token ViT & Mở rộng (Mục 5.1), phải ghi rõ\\
+Phân hoạch & $U=B(0,R)$, vòng đều, $\theta_\ell=2\pi\ell/N_\theta$ bắt đầu từ $0$ (Mục 4.2) & A: đĩa nội tiếp, cung lệch nửa ô; B: $R$ = nửa đường chéo, ô ngoài bị cắt bởi khung ảnh & Hợp lệ theo Mục 3 (phân hoạch tổng quát), nhưng khác Mục 4.2\\
+Tập nhìn thấy, vật cản & $V(x^*)$ theo tầm nhìn thẳng; $O$ là toà nhà hoặc vùng cấm bay; Mệnh đề 4.3, 4.4 cần $O$ đa giác & Không có $O$, $V$ là khung ảnh & Các kết quả liên tục theo $x^*$ \emph{không chuyển} sang mạng, vì $\varphi$ không phải hàm hình học\\
+Trọng số $f$ & $f_{\mathrm{decay}}$ phân biệt được cấu hình mà $f\equiv1$ không phân biệt được (Ví dụ 4.1); thực nghiệm của bài dùng $f\equiv1$ & Mọi run dùng $f_{\mathrm{decay}}$; tuỳ chọn \texttt{rs\_weight=uniform} có sẵn nhưng chưa chạy & \textbf{Chưa kiểm chứng} vai trò của $f$ trên DenseUAV\\
+Bất biến xoay & Sector cố định theo khung bản đồ, cần xoay quan sát theo heading (Mục 6, Limitations); Future work nêu hai cách: căn theo heading, hoặc tổ hợp bất biến kiểu Hu~\cite{hu1962} & Chọn cách thứ hai ($|\mathrm{DFT}|$ theo sector) & Giảm 2.8 R@1: ủng hộ cách thứ nhất, hoặc giữ khung bản đồ (Mục 5.3)\\
+Tinh phân hoạch & Định lý 5.4, Hệ quả 5.5: tinh hơn thì phân biệt tốt hơn; Bảng 2: số ứng viên giảm từ 4.00 xuống 1.00 & 8 sector thua 1 sector & Không mâu thuẫn (Mục 5.4); dự đoán của định lý \emph{chưa được kiểm tra}\\
+Liên tục Lipschitz & Mệnh đề 3.5, 3.7, Hệ quả 4.7: $x^*\mapsto W(x^*)$ Lipschitz địa phương, hằng số $2M\pi D^2/d_0+P_i$ & CT2 \emph{ép} tính chất này lên embedding học được; đo Lipschitz thực nghiệm & Đại lượng trong Bảng 6 là bản thực nghiệm của Mệnh đề 3.7 (Mục 5.5)\\
+Thực nghiệm & 9 ảnh, $\sim$10 toà nhà, $f\equiv1$, $O=\emptyset$; đo bằng số ứng viên; tự nêu là chưa so với đặc trưng học~\cite{lpn,dai2024} & 2331 query, 3033 vị trí, R@1/SDM, so trực tiếp với LPN trên DenseUAV & Lấp một phần giới hạn mà bài tự nêu\\\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Bất biến xoay: dữ liệu trả lời câu hỏi mà bài để mở}
+Mục 6 của~\cite{huu2026} nêu hai cách đạt bất biến xoay nhưng không chọn cách nào. Hai notebook đã hiện thực cách thứ hai và cho ba bằng chứng cùng chiều:
+\begin{itemize}
+\item \run{RS\_B2} thấp hơn \run{ringonly} 2.8 R@1;
+\item TTA xoay làm giảm R@1 ở cả 11/11 run dùng head chia phần;
+\item \run{irp} không hơn \run{lpn}.
+\end{itemize}
+Giả thuyết: hướng bay của query trong DenseUAV gần trùng với khung bản đồ. Khi đó, tổ hợp bất biến bỏ đi đúng phần thông tin pha (hướng) vốn có ích cho việc phân biệt. Nếu giả thuyết được xác nhận (bằng cách kiểm tra phân bố heading), paper nên đi theo cách thứ nhất: giữ sector trong khung bản đồ như Mục 4.2 gốc, và căn quan sát theo heading khi cần.
+
+\subsection{Tinh phân hoạch: vì sao 8 sector thua 1 sector mà không trái Định lý 5.4}
+Hệ quả~5.5 phát biểu cho \emph{toàn bộ} vector $W^N$, tức mọi trung bình ô. Head \run{RS} chỉ giữ $\big[\text{trung bình},|\mathrm{DFT}_{1..2}|\big]$ của mỗi vòng. Đây là một phép chiếu bỏ pha, không đơn ánh. Vì vậy phân hoạch mịn hơn \emph{không} làm descriptor mịn hơn, và Hệ quả~5.5 không áp dụng.
+
+Thêm hai khác biệt nữa so với giả thiết của định lý:
+\begin{itemize}
+\item trường $\varphi$ được học đồng thời với head, không cố định như $g_{x^*}$ trong định lý;
+\item $\varphi$ hằng trên patch $16\times16$\,px, nên tinh phân hoạch vượt cỡ patch không thêm thông tin.
+\end{itemize}
+Thí nghiệm kiểm tra trực tiếp dự đoán của Định lý~5.4 vẫn còn thiếu: sweep $N_r\in\{2,3,4\}$, $N_\theta\in\{1,4,8\}$, giữ \emph{mọi} ô (không dùng DFT), có thể kèm căn heading.
+
+\subsection{Liên tục và phân biệt là hai tính chất đối nghịch trên lưới 20\,m}
+Bài~\cite{huu2026} xử lý hai tính chất bằng hai nhóm kết quả riêng:
+\begin{itemize}
+\item tính liên tục là một \emph{cận trên} cho sự thay đổi của $W$ khi $x^*$ dịch chuyển (Mệnh đề~3.7);
+\item tính phân biệt là cấu hình khác nhau cho vector khác nhau (Hệ quả~5.5).
+\end{itemize}
+Với descriptor hình học cố định, hai tính chất cùng tồn tại. Với embedding học được, CT2 ép cận trên chặt hơn: Lipschitz p95 giảm từ 0.0508 xuống 0.0427 và số cặp gián đoạn giảm từ 44 xuống 2. Cái giá là mất khả năng phân biệt ô kề: tỉ lệ lỗi ô kề tăng từ 9.7\% lên 14.5\%, cặp mơ hồ tăng từ 75 lên 87.
+
+Cũng cần lưu ý: ý ``ràng buộc mềm thay cho Lipschitz cứng'' là định hướng của nhóm, không phải phát biểu của~\cite{huu2026}. Bài chỉ \emph{chứng minh} tính Lipschitz cho một descriptor cố định, chứ không đề xuất nó như một mục tiêu huấn luyện.
+
+\section{Thảo luận}
+\begin{enumerate}[label=(\arabic*),leftmargin=2em]
+\item \textbf{Lợi ích nằm ở cấu trúc vòng, không ở sector hay trọng số.} Head chia phần theo vòng tăng khoảng $+5.9$ R@1 so với Global. Lợi ích tập trung ở độ cao 80\,m ($+10.3$ ở H80 so với $+2.2$ ở H100), đồng thời giảm cặp mơ hồ từ 75 xuống 24. Vòng tròn với $f_{\mathrm{decay}}$ và vòng vuông LPN cho kết quả như nhau trong biên nhiễu.
+\item \textbf{Bất biến xoay gây hại trên DenseUAV} (Mục~5.3).
+\item \textbf{Làm mượt không gian đạt mục tiêu hình học nhưng không tăng R@1.} R@1 đòi hỏi phân biệt \emph{sắc} giữa các ô kề, nên mọi prior làm mượt cục bộ đều đối nghịch với metric chính. SDM@1 và MA@20m chỉ giảm 1.2 và 0.8, vì lỗi mới đều nằm gần vị trí đúng.
+\item \textbf{Gộp đặc trưng gallery là cải thiện lớn nhất, và cách gộp quyết định kết quả.} DBA (trung bình đặc trưng rồi chuẩn hoá lại) tăng R@1 ở mọi run, giảm lỗi xa từ 8.6\% xuống 5.5\% và giảm trung vị sai số từ 43\,m xuống 21\,m. Ngược lại, loc-fuse dùng $q\cdot\bar g=\lVert\bar g\rVert\cos(q,\bar g)$ nên phạt những địa điểm có 6 ảnh khác nhau nhiều, và R@1 giảm. DBA chỉ dùng siêu dữ liệu sẵn có của bản đồ, nhưng phải báo cáo tách riêng khi so với SOTA.
+\item \textbf{DSS là thay đổi huấn luyện hứa hẹn nhất, nhưng chưa đủ bằng chứng.} DSS cho $+1.12$ R@1 ở giao thức repo, nhưng chỉ còn $+0.09$ (2 query) khi đã có DBA.
+\item \textbf{DINOv2 thất bại ở cả hai pipeline} (4.76 R@1 với lr 0.01; 20.59 với lr 0.003). Lr nhỏ hơn cho kết quả tốt hơn, gợi ý nguyên nhân là công thức tối ưu chứ không phải năng lực của backbone.
+\end{enumerate}
+
+\section{Hạn chế}
+\begin{itemize}
+\item Mỗi cấu hình chỉ chạy 1 seed; chỉ A có một cặp seed để ước lượng nhiễu.
+\item Cả hai baseline đều thấp hơn run ở độ phân giải gốc ($-1.29$ và $-1.63$ R@1). Chưa tách được phần do cache và phần do nhiễu.
+\item A và B khác nhau về baseline, loss, cache và định nghĩa vùng, nên không so sánh chéo giữa hai thí nghiệm.
+\item ViT-B chưa chạy được.
+\item Vai trò của $f$ (so sánh $f_{\mathrm{decay}}$ với $f\equiv1$) và dự đoán tinh phân hoạch của~\cite{huu2026} chưa được kiểm tra trên DenseUAV.
+\end{itemize}
+
+\section{Kết luận và hướng tiếp theo}
+Kết quả tốt nhất trên DenseUAV là \textbf{87.43 R@1 / 90.22 SDM@1} (IRP + D4 + DBA, ViT-S). Cải thiện đến chủ yếu từ head chia phần theo vòng và từ gộp đặc trưng gallery. Đối chiếu với~\cite{huu2026}:
+\begin{itemize}
+\item head mạng là một mở rộng (trung bình ô theo độ đo $f\,dm$ trên trường ngữ nghĩa) của shape vector;
+\item lựa chọn tổ hợp bất biến cho bài toán heading không phù hợp với DenseUAV;
+\item hai giả thuyết đặc trưng của lý thuyết vẫn chưa được kiểm chứng: vai trò của $f$ và tinh phân hoạch.
+\end{itemize}
+Đề xuất, theo thứ tự ưu tiên:
+\begin{enumerate}
+\item Chạy 3 seed cho \run{lpn}, \run{lpn\_dss} và \run{irp}.
+\item Kiểm tra phân bố heading của query.
+\item Chạy ablation $f_{\mathrm{decay}}$ so với $f\equiv1$ trên \run{ringonly}.
+\item Sweep $(N_r,N_\theta)$ giữ mọi ô, có hoặc không căn heading, để kiểm tra Định lý~5.4.
+\item Sửa loc-fuse thành trung bình đặc trưng có chuẩn hoá.
+\item Đánh giá CT2 bằng SDM và MA@20m.
+\item Viết chứng minh Định lý~5.4 cho độ đo $f\,dm$.
+\end{enumerate}
+
+\begin{thebibliography}{9}\small
+\bibitem{huu2026} P.~T.~Huu, P.~T.~An, D.~X.~Vinh, A.-D.~Tran, \emph{Lebesgue integral-based shape vector descriptors with applications to GPS-denied UAV localization}, bản thảo, 2026.
+\bibitem{dai2024} M.~Dai, E.~Zheng, Z.~Feng, L.~Qi, J.~Zhuang, W.~Yang, Vision-based UAV self-positioning in low-altitude urban environments, \emph{IEEE Trans.\ Image Process.} 33 (2024) 493--508. doi:10.1109/TIP.2023.3346279.
+\bibitem{lpn} T.~Wang, Z.~Zheng, C.~Yan, J.~Zhang, Y.~Sun, B.~Zheng, Y.~Yang, Each part matters: local patterns facilitate cross-view geo-localization, \emph{IEEE Trans.\ Circuits Syst.\ Video Technol.} 32(2) (2022) 867--879. doi:10.1109/TCSVT.2021.3061265.
+\bibitem{ouyang2024} C.~Ouyang et al., A semantic vector map-based approach for aircraft positioning in GNSS/GPS denied large-scale environment, \emph{Defence Technology} 34 (2024) 1--10. doi:10.1016/j.dt.2023.07.006.
+\bibitem{hu1962} M.-K.~Hu, Visual pattern recognition by moment invariants, \emph{IRE Trans.\ Inf.\ Theory} 8(2) (1962) 179--187.
+\bibitem{ceusp} CEUSP, arXiv:2502.11408, 2025.
+\bibitem{dba} R.~Arandjelović, A.~Zisserman, Three things everyone should know to improve object retrieval, \emph{CVPR}, 2012.
+\end{thebibliography}
+\end{document}
